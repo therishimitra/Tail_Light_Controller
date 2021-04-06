@@ -1,0 +1,240 @@
+----------------------------------------------------------------------------------------------------
+--  TAIL LIGHT CONTROLLER TEST BENCH
+----------------------------------------------------------------------------------------------------
+LIBRARY IEEE;
+USE     IEEE.std_logic_1164.all;
+USE     IEEE.numeric_std.all;
+USE     std.textio.all;
+
+ENTITY TB IS
+END TB;
+
+-------------------------------------------
+ARCHITECTURE TAIL_LIGHT_CONTROLLER of TB is
+-------------------------------------------
+  COMPONENT TAIL_LIGHT_CONTROLLER is
+    GENERIC (	DIVIDE_RATE 	: natural := 500; 			-- Master clock divide rate
+				FLASH_PERIOD 	: natural := 3000 ); 		-- Turn signal flash divide rate
+				
+    PORT    ( 	RESET : in  std_logic; 						-- Active high master reset
+				CLOCK : in  std_logic; 						-- Master clock
+				CTRL  : in  std_logic_vector (3 downto 0); 	-- Control inputs
+				LEFT  : out std_logic; 						-- Left tail light PWM output
+				RIGHT : out std_logic; 						-- Right tail light PWM output
+				CYCLE : out std_logic                   ); 	-- PWM cycle indicator (for testing)
+  END COMPONENT;
+  
+    signal   LEFT_INTENSITY  : real range 0.0 to 1.0;
+    signal   RIGHT_INTENSITY : real range 0.0 to 1.0;
+
+    constant DIVIDE_RATE     : natural := 20;					
+	constant FLASH_PERIOD    : natural := 10;
+    
+	signal 	 RESET    :  std_logic; 						
+	signal	 CLOCK    :  std_logic; 						
+	signal	 CTRL     :  std_logic_vector (3 downto 0); 	
+	signal	 LEFT     :  std_logic; 						
+	signal	 RIGHT    :  std_logic; 						
+	signal	 CYCLE    :  std_logic; 	
+
+    constant TCLK     : time    :=  1 uS;
+    signal   DONE     : boolean := FALSE;
+
+    -- Procedure to print out messages
+    --------------------------------
+    procedure PUTS (MSG : string) is
+    --------------------------------
+        variable  LBFR : line;
+    begin
+        write     (LBFR,   MSG);
+        writeline (OUTPUT, LBFR);
+    end PUTS;
+
+BEGIN
+
+-------------------
+--  Unit Under Test
+-------------------
+
+  UUT:  TAIL_LIGHT_CONTROLLER
+    generic map ( DIVIDE_RATE 	=> 20, 					-- Master clock divide rate
+			      FLASH_PERIOD  => 10 ) 			    -- Turn signal flash divide rate  
+    port map    ( RESET         => RESET,
+                  CLOCK         => CLOCK,
+                  CTRL          => CTRL,
+                  LEFT          => LEFT,
+                  RIGHT         => RIGHT,
+                  CYCLE         => CYCLE);
+
+----------------------
+--  Clock/Reset Driver
+----------------------
+
+--  Place clock/reset driver here
+
+    PROCESS BEGIN 
+        RESET <= '1', '0' after TCLK;
+        CLOCK <= '0';
+        wait for 2 * TCLK;
+        while not DONE loop
+            CLOCK <= '1', '0'after TCLK / 2;
+            wait for TCLK;
+        end loop;
+        report "Simulation complete" severity note;
+        wait;
+    END PROCESS;
+    
+---------------------------
+--  Main Test Signal Driver
+---------------------------
+
+    PROCESS 
+        variable HIGH : real range 0.0 to 1.0;
+        variable LOW  : real range 0.0 to 1.0;
+        
+        -- Procedure to check the intensity level of the LEDs
+        procedure TEST (DELAY : in natural; LEFT : in real; RIGHT : in real) is 
+        begin
+            for I in 1 to DELAY loop
+                loop
+                    wait until CLOCK = '1';
+                    exit when  CYCLE = '1';
+                end loop;
+            end loop;
+            wait until CLOCK = '1';          				--  Allow INTENSITY signals to update
+
+         
+                assert (LEFT_INTENSITY  = LEFT)  report "Left turn signal incorrect. "  severity error;
+                assert (RIGHT_INTENSITY = RIGHT) report "Right turn signal incorrect. " severity error;
+        end TEST;
+        
+    BEGIN
+    
+--  Place signal initialization here
+
+		for HEADLIGHTS in 0 to 1 loop
+			if (HEADLIGHTS = 0) then
+				PUTS ("Headlights OFF...");
+				HIGH := 1.0;
+				LOW  := 0.0;
+			else
+				PUTS("Headlights ON...");
+				HIGH := 0.5;
+				LOW  := 0.1;
+			end if;
+			
+-- All brake and turn signal combinations:
+
+            for CTRL_I in 0 to 7 loop
+                CTRL <= std_logic_vector(To_Unsigned(8 * HEADLIGHTS + CTRL_I, 4));
+                wait until CLOCK = '1';
+                
+                case CTRL(2 downto 0) is
+                    when "000"  =>  PUTS("Brakes are off. No turn signals.");
+                                    TEST(DELAY => 2, LEFT => LOW, RIGHT => LOW);
+                                    for I in 2 to FLASH_PERIOD - 1 loop
+                                        TEST(DELAY => 1, LEFT => LOW, RIGHT => LOW);
+                                    end loop;
+                    
+                    when "001"  =>  PUTS("        Right turn signal checking.");
+                                    TEST(DELAY => 2, LEFT => LOW, RIGHT => HIGH);
+                                    for I in 2 to FLASH_PERIOD - 1 loop
+                                        if (I <= FLASH_PERIOD / 2) 
+                                           then TEST(DELAY => 1, LEFT => LOW, RIGHT => HIGH);
+                                           else TEST(DELAY => 1, LEFT => LOW, RIGHT => LOW);
+                                        end if;
+                                    end loop;
+                    
+                    when "010"  =>  PUTS("        Left turn signal checking.");
+                                    TEST(DELAY => 2, LEFT => HIGH, RIGHT => LOW);
+                                    for I in 2 to FLASH_PERIOD - 1 loop
+                                        if (I <= FLASH_PERIOD / 2) 
+                                           then TEST(DELAY => 1, LEFT => HIGH, RIGHT => LOW);
+                                           else TEST(DELAY => 1, LEFT => LOW,  RIGHT => LOW);
+                                        end if;
+                                    end loop;
+                                    
+                    when "011"  =>  PUTS ("        Hazard checking.");
+                                    TEST(DELAY => 2, LEFT => HIGH, RIGHT => HIGH);
+                                    for I in 2 to FLASH_PERIOD - 1 loop
+                                        if (I <= FLASH_PERIOD / 2) 
+                                           then TEST(DELAY => 1, LEFT => HIGH, RIGHT => HIGH);
+                                           else TEST(DELAY => 1, LEFT => LOW, RIGHT => LOW);
+                                        end if;
+                                    end loop;        
+
+                    when "100"  =>  PUTS("Brakes are on. No turn signals.");
+                                    TEST(DELAY => 2, LEFT => HIGH, RIGHT => HIGH);
+                                    for I in 2 to FLASH_PERIOD - 1 loop
+                                        TEST(DELAY => 1, LEFT => HIGH, RIGHT => HIGH);
+                                    end loop;
+                                    
+                    when "101"  =>  PUTS("        Right turn signal checking.");
+                                    TEST(DELAY => 2, LEFT => HIGH, RIGHT => HIGH);
+                                    for I in 2 to FLASH_PERIOD - 1 loop
+                                        if (I <= FLASH_PERIOD / 2) 
+                                           then TEST(DELAY => 1, LEFT => HIGH, RIGHT => HIGH);
+                                           else TEST(DELAY => 1, LEFT => HIGH, RIGHT => LOW);
+                                        end if;
+                                    end loop;
+                                    
+                    when "110"  =>  PUTS("        Left turn signal checking.");
+                                    TEST(DELAY => 2, LEFT => HIGH, RIGHT => HIGH);
+                                    for I in 2 to FLASH_PERIOD - 1 loop
+                                        if (I <= FLASH_PERIOD / 2) 
+                                           then TEST(DELAY => 1, LEFT => HIGH, RIGHT => HIGH);
+                                           else TEST(DELAY => 1, LEFT => LOW,  RIGHT => HIGH);
+                                        end if;
+                                    end loop;
+                                    
+                    when "111"  =>  PUTS ("        Hazard checking.");
+                                    TEST(DELAY => 2, LEFT => HIGH, RIGHT => HIGH);
+                                    for I in 2 to FLASH_PERIOD - 1 loop
+                                        if (I <= FLASH_PERIOD / 2) 
+                                           then TEST(DELAY => 1, LEFT => HIGH, RIGHT => HIGH);
+                                           else TEST(DELAY => 1, LEFT => LOW, RIGHT => LOW);
+                                        end if;
+                                    end loop;
+
+                    when others =>  report "CTRL value error."  severity error;
+                end case;                    
+            end loop;
+        end loop;
+        
+        DONE <= TRUE;
+        wait;
+    END PROCESS;
+    
+------------------
+--  Output Monitor
+------------------    
+ 
+    PROCESS
+        variable LEFT_COUNT  : natural := 0;
+        variable RIGHT_COUNT : natural := 0;
+        variable CYCLE_COUNT : natural := 0; 
+    BEGIN
+        wait until RESET = '0';
+        wait until CLOCK = '1';
+        while not DONE loop
+            wait until CLOCK = '1';
+            CYCLE_COUNT := CYCLE_COUNT + 1; 								-- Count all PWM cycles
+            if (LEFT = '1') then
+                LEFT_COUNT := LEFT_COUNT + 1; 								-- Count all high intensity PWM cycles on the LEFT output
+            end if;
+            if (RIGHT = '1') then
+                RIGHT_COUNT := RIGHT_COUNT + 1; 							-- Count all high intensity PWM cycles on the RIGHT output
+            end if;
+            if (CYCLE = '1') then 											-- Compute the intensity of each output at the end of a cycle
+                LEFT_INTENSITY  <= real (LEFT_COUNT)  / real (CYCLE_COUNT);
+                RIGHT_INTENSITY <= real (RIGHT_COUNT) / real (CYCLE_COUNT);
+                LEFT_COUNT  := 0;
+                RIGHT_COUNT := 0;
+                CYCLE_COUNT := 0;
+            end if;
+        end loop;
+        wait;
+    END PROCESS;
+
+end architecture;
+			
